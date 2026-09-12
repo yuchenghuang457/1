@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HEIC / Exif 圖片資訊修改器</title>
+    <!-- 引入 HEIC 解析庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+    <!-- 引入 EXIF 修改庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f7;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+        button {
+            background-color: #0071e3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0077ed;
+        }
+        #status {
+            margin-top: 15px;
+            color: #666;
+        }
+        #preview {
+            max-width: 100%;
+            margin-top: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>HEIC 圖片 EXIF 修改器</h2>
+
+    <div class="form-group">
+        <label for="upload">上傳 HEIC / JPG 圖片：</label>
+        <input type="file" id="upload" accept=".heic, .heif, .jpg, .jpeg">
+    </div>
+
+    <div class="form-group">
+        <label for="make">製造商 (Make)：</label>
+        <input type="text" id="make" value="Apple">
+    </div>
+
+    <div class="form-group">
+        <label for="model">相機型號 (Model)：</label>
+        <input type="text" id="model" value="iPhone 17">
+    </div>
+
+    <button id="process-btn">修改 EXIF 並下載</button>
+
+    <div id="status"></div>
+    <img id="preview" alt="預覽圖">
+
+    <script>
+        const fileInput = document.getElementById('upload');
+        const makeInput = document.getElementById('make');
+        const modelInput = document.getElementById('model');
+        const btn = document.getElementById('process-btn');
+        const status = document.getElementById('status');
+        const preview = document.getElementById('preview');
+
+        btn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('請先選擇一張圖片！');
+                return;
+            }
+
+            status.textContent = '處理中，請稍候...';
+
+            try {
+                let jpegBase64 = '';
+
+                // 1. 如果是 HEIC/HEIF 檔，先轉成 JPG Base64
+                if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+                    status.textContent = '解碼 HEIC 圖片中...';
+                    const conversionResult = await heic2any({
+                        blob: file,
+                        toType: "image/jpeg",
+                        quality: 0.92
+                    });
+                    
+                    const blob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
+                    jpegBase64 = await blobToBase64(blob);
+                } else {
+                    // 如果本身就是 JPG，直接轉 Base64
+                    jpegBase64 = await blobToBase64(file);
+                }
+
+                // 2. 修改 EXIF 資料
+                status.textContent = '正在修改 EXIF 資訊...';
+                
+                // 嘗試獲取或建立 EXIF 結構
+                let exifObj = { "0th": {}, "Exif": {}, "GPS": {} };
+                try {
+                    exifObj = piexif.load(jpegBase64);
+                } catch (e) {
+                    console.log('原圖無 EXIF 或解析失敗，建立新 EXIF 資料包。');
+                }
+
+                // 設定 Make 與 Model (EXIF 271 與 272)
+                exifObj["0th"][piexif.ImageIFD.Make] = makeInput.value;
+                exifObj["0th"][piexif.ImageIFD.Model] = modelInput.value;
+
+                // 將修改後的 EXIF 寫回 Base64 圖片
+                const exifBytes = piexif.dump(exifObj);
+                const newJpegBase64 = piexif.insert(exifBytes, jpegBase64);
+
+                // 3. 顯示預覽與提供下載
+                preview.src = newJpegBase64;
+                preview.style.display = 'block';
+
+                downloadBase64Image(newJpegBase64, `edited_${file.name.split('.')[0]}.jpg`);
+                status.textContent = '修改成功！已開始下載圖片。';
+
+            } catch (err) {
+                console.error(err);
+                status.textContent = '處理失敗：' + err.message;
+            }
+        });
+
+        // Helper: Blob 轉 Base64
+        function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // Helper: 下載 Base64 檔案
+        function downloadBase64Image(base64Data, filename) {
+            const link = document.createElement('a');
+            link.href = base64Data;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
